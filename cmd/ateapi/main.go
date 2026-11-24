@@ -36,6 +36,7 @@ import (
 	"go.ate.dev/substrate/cmd/ateapi/internal/apiauthn"
 	"go.ate.dev/substrate/cmd/ateapi/internal/authz"
 	"go.ate.dev/substrate/cmd/ateapi/internal/controlapi"
+	"go.ate.dev/substrate/cmd/ateapi/internal/overcommit"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store/atepg"
 	"go.ate.dev/substrate/cmd/ateapi/internal/workercache"
 	"go.ate.dev/substrate/cmd/ateapi/internal/workerservice"
@@ -73,7 +74,8 @@ const maxRPCDeadline = 10 * time.Minute
 const minResyncInterval = 250 * time.Millisecond
 
 var (
-	configFile = pflag.String("config-file", "", "API server config file")
+	configFile           = pflag.String("config-file", "", "API server config file")
+	overcommitConfigFile = pflag.String("overcommit", "", "Enable experimental actor placement for a worker pool with this YAML configuration.")
 
 	listenAddr           = pflag.String("grpc-listen-addr", ":443", "Address and port the gRPC server should listen on.")
 	metricsListenAddr    = pflag.String("metrics-listen-addr", ":9090", "Address and port the prometheus metrics server should listen on.")
@@ -343,6 +345,10 @@ func main() {
 		serverboot.Fatal(ctx, "while loading the Actor ID JWT authority pool", err)
 	}
 
+	overcommitPolicy, err := overcommit.Start(shutdownCtx, *overcommitConfigFile)
+	if err != nil {
+		serverboot.Fatal(ctx, "Failed to configure overcommit", err)
+	}
 	controlSrv := controlapi.NewRPCService(
 		persistence,
 		workerCache,
@@ -356,6 +362,7 @@ func main() {
 		*actorJWTIssuer,
 		actorIDJWTAuthorityPool,
 		*snapshotLocation,
+		controlapi.WithOvercommit(overcommitPolicy),
 	)
 
 	// Drive stored ActorTemplates through the golden actor flow.

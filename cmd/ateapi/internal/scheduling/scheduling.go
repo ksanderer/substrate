@@ -25,6 +25,7 @@ import (
 	"slices"
 
 	"go.ate.dev/substrate/api/ateapi/v1"
+	"go.ate.dev/substrate/cmd/ateapi/internal/overcommit"
 	"go.ate.dev/substrate/internal/hardware"
 	"go.ate.dev/substrate/internal/resources"
 	"k8s.io/apimachinery/pkg/labels"
@@ -63,7 +64,8 @@ type Constraints struct {
 
 	// Limits are the actor's declared resource limits, in the units a Worker
 	// reports its capacity in, so the two subtract.
-	Limits *ateapi.Resources
+	Limits     *ateapi.Resources
+	Overcommit *overcommit.Policy
 }
 
 // ErrNoCapacity is returned by Schedule when no worker that meets the
@@ -135,7 +137,7 @@ func (s *scheduler) Schedule(ctx context.Context, constraints Constraints) (*ate
 		if !ok {
 			continue
 		}
-		if cand, ok := checkRoom(worker, booking); ok {
+		if cand, ok := checkRoom(worker, booking, constraints.Overcommit); ok {
 			candidates = append(candidates, cand)
 		}
 	}
@@ -261,14 +263,13 @@ func (s *scheduler) Applies(worker *ateapi.Worker, constraints Constraints) bool
 }
 
 // HasRoom reports whether what the worker has left admits one more actor of
-// this size. A dimension the worker does not report is unconstrained, so
-// placement is never blocked by missing data.
+// this size.
 func (s *scheduler) HasRoom(worker *ateapi.Worker, constraints Constraints) bool {
 	booking, ok := Booking(worker, constraints)
 	if !ok {
 		return false
 	}
-	_, ok = checkRoom(worker, booking)
+	_, ok = checkRoom(worker, booking, constraints.Overcommit)
 	return ok
 }
 
@@ -276,20 +277,21 @@ func (s *scheduler) HasRoom(worker *ateapi.Worker, constraints Constraints) bool
 // the overhead of the worker runtime it would run under there. It reports
 // false when that doesn't fit in an int64, and the actor doesn't fit on the worker.
 func Booking(worker *ateapi.Worker, constraints Constraints) (*ateapi.Resources, bool) {
+	booking := constraints.Overcommit.Booking(worker, constraints.Limits)
 	overhead := constraints.SnapshotRuntime.WorkerRuntimeFor(worker.GetStatus()).GetActorOverhead()
 	if overhead == nil {
-		return constraints.Limits, true
+		return booking, true
 	}
 	limit := constraints.Limits.GetMemoryBytes()
 	scaled, ok := perGiB(limit, overhead.GetMemoryBytesPerGib())
 	if !ok {
 		return nil, false
 	}
-	memory, ok := sum(limit, overhead.GetMemoryBytes(), scaled)
+	memory, ok := sum(booking.GetMemoryBytes(), overhead.GetMemoryBytes(), scaled)
 	if !ok {
 		return nil, false
 	}
-	return &ateapi.Resources{CpuMillicores: constraints.Limits.GetCpuMillicores(), MemoryBytes: memory}, true
+	return &ateapi.Resources{CpuMillicores: booking.GetCpuMillicores(), MemoryBytes: memory}, true
 }
 
 // perGiB scales rate bytes per GiB to n bytes, and reports false on overflow.
@@ -318,8 +320,11 @@ func sum(vs ...int64) (int64, bool) {
 	return total, true
 }
 
-func checkRoom(worker *ateapi.Worker, want *ateapi.Resources) (candidate, bool) {
-	capacity := worker.GetStatus().GetCapacity()
+func checkRoom(worker *ateapi.Worker, want *ateapi.Resources, policy *overcommit.Policy) (candidate, bool) {
+	capacity, ok := policy.Capacity(worker)
+	if !ok {
+		return candidate{}, false
+	}
 	used := worker.GetStatus().GetAllocated()
 
 	// No per-actor size to compare: every assignment costs one, so a worker at

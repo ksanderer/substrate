@@ -24,6 +24,7 @@ import (
 
 	"go.ate.dev/substrate/api/ateapi/v1"
 	"go.ate.dev/substrate/api/objectstore/v1"
+	"go.ate.dev/substrate/cmd/ateapi/internal/overcommit"
 	"go.ate.dev/substrate/cmd/ateapi/internal/scheduling"
 	"go.ate.dev/substrate/cmd/ateapi/internal/store"
 	"go.ate.dev/substrate/cmd/ateapi/internal/workercache"
@@ -109,6 +110,7 @@ type ActorWorkflow struct {
 	store                   actorWorkflowStore
 	workerCache             *workercache.Cache
 	scheduler               scheduling.Scheduler
+	overcommit              *overcommit.Policy
 	dialer                  *AteletDialer
 	storageClassLister      storagev1listers.StorageClassLister
 	instruments             *Instruments
@@ -116,6 +118,14 @@ type ActorWorkflow struct {
 	pluginRegistry          VolumePluginRegistry
 	objectStorePlugin       objectstore.ControlProviderClient
 	clusterSnapshotLocation string
+}
+
+// ActorWorkflowOption configures the actor lifecycle.
+type ActorWorkflowOption func(*ActorWorkflow)
+
+// WithOvercommit enables an experimental placement policy.
+func WithOvercommit(policy *overcommit.Policy) ActorWorkflowOption {
+	return func(w *ActorWorkflow) { w.overcommit = policy }
 }
 
 // NewActorWorkflow creates a new ActorWorkflow. instruments may be nil.
@@ -132,8 +142,9 @@ func NewActorWorkflow(
 	egressGatewayAddress string,
 	pluginRegistry VolumePluginRegistry,
 	objectStorePlugin objectstore.ControlProviderClient,
+	options ...ActorWorkflowOption,
 ) *ActorWorkflow {
-	return &ActorWorkflow{
+	w := &ActorWorkflow{
 		store:                store,
 		workerCache:          workerCache,
 		scheduler:            scheduling.New(workerCache),
@@ -144,6 +155,10 @@ func NewActorWorkflow(
 		pluginRegistry:       pluginRegistry,
 		objectStorePlugin:    objectStorePlugin,
 	}
+	for _, option := range options {
+		option(w)
+	}
+	return w
 }
 
 // snapshotLocation returns the base object-storage URI actorTemplate's

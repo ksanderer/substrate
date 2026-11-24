@@ -86,6 +86,7 @@ func NewRPCService(
 	actorJWTIssuer string,
 	actorIDJWTPool localjwtauthority.Pool,
 	snapshotLocation string,
+	workflowOptions ...ActorWorkflowOption,
 ) *RPCService {
 	impl := newServiceImpl(persistence, storageClassLister)
 	impl.clusterSnapshotLocation = snapshotLocation
@@ -101,7 +102,7 @@ func NewRPCService(
 		actorJWTIssuer:        actorJWTIssuer,
 		actorIDJWTPool:        actorIDJWTPool,
 	}
-	s.actorWorkflow = NewActorWorkflow(impl, workerCache, dialer, storageClassLister, instruments, egressGatewayAddress, s, objectStorePlugin)
+	s.actorWorkflow = NewActorWorkflow(impl, workerCache, dialer, storageClassLister, instruments, egressGatewayAddress, s, objectStorePlugin, workflowOptions...)
 	s.actorWorkflow.clusterSnapshotLocation = snapshotLocation
 	s.workerWorkflow = NewWorkerWorkflow(impl, dialer)
 	return s

@@ -376,7 +376,7 @@ func (w *ActorWorkflow) validateAssignedWorker(ctx context.Context, actorRef res
 	if !hosted {
 		return nil, apierror.Aborted("actor %s has moved off worker %s since it was read", actorRef, worker.GetMetadata().GetName())
 	}
-	constraints := schedulingConstraints(actor, actorTemplate)
+	constraints := w.schedulingConstraints(actor, actorTemplate)
 	if !w.appliesWithFallback(worker, constraints, canRelaxRuntime(actor, constraints)) {
 		slog.ErrorContext(ctx, "crashing actor because previously assigned worker is not eligible anymore")
 		// The crash releases the worker, e.g. one whose pool the actor's
@@ -418,7 +418,7 @@ func (w *ActorWorkflow) assignWorkerAttempt(ctx context.Context, actorRef resour
 		}
 	}()
 
-	constraints := schedulingConstraints(actor, actorTemplate)
+	constraints := w.schedulingConstraints(actor, actorTemplate)
 	snapRuntime := constraints.SnapshotRuntime
 	class = constraints.SandboxClass
 	relaxable := canRelaxRuntime(actor, constraints)
@@ -564,7 +564,7 @@ func toAteletSandboxRuntime(in *ateapi.ActorSandboxRuntime) *ateletpb.ActorSandb
 	return out
 }
 
-func schedulingConstraints(actor *ateapi.Actor, tmpl *ateapi.ActorTemplate) scheduling.Constraints {
+func (w *ActorWorkflow) schedulingConstraints(actor *ateapi.Actor, tmpl *ateapi.ActorTemplate) scheduling.Constraints {
 	snap := snapshotToResume(actor.GetStatus())
 	var requiredNodes []string
 	if node := actor.GetStatus().GetAssignedNode(); node != "" {
@@ -578,6 +578,7 @@ func schedulingConstraints(actor *ateapi.Actor, tmpl *ateapi.ActorTemplate) sche
 		ActorSelector:   labels.SelectorFromSet(labels.Set(actor.GetWorkerSelector().GetMatchLabels())),
 		RequiredNodes:   requiredNodes,
 		Limits:          tmpl.GetResources().GetLimits(),
+		Overcommit:      w.overcommit,
 	}
 	if sel := tmpl.GetWorkerSelector(); sel != nil {
 		c.TemplateSelector = labels.SelectorFromSet(labels.Set(sel.GetMatchLabels()))
